@@ -21,7 +21,7 @@ embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L
 # --- 4. Indexer les chunks avec FAISS
 vectordb = FAISS.from_documents(docs, embedding)
 
-# --- 5. Utiliser le modèle MISTRAL via Ollama
+# --- 5. Utiliser le modèle mistral via Ollama
 llm = OllamaLLM(model="mistral")  # ✅ ici on utilise mistral en faisant "ollama pull mistral"
 
 # --- 6. Créer la chaîne RAG

@@ -1,0 +1,2 @@
+L’apprentissage automatique (machine learning) est un sous-domaine de l’intelligence artificielle. Il consiste à créer des modèles capables d’apprendre à partir de données. On distingue plusieurs types d'apprentissage : supervisé, non supervisé et par renforcement.
+

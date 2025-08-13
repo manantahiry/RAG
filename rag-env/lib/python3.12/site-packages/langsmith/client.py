@@ -401,9 +401,11 @@ class Client:
     __slots__ = [
         "__weakref__",
         "api_url",
-        "api_key",
+        "_api_key",
+        "_headers",
         "retry_config",
         "timeout_ms",
+        "_timeout",
         "session",
         "_get_data_type_cached",
         "_web_url",
@@ -425,6 +427,11 @@ class Client:
         "_futures",
         "otel_exporter",
     ]
+
+    _api_key: Optional[str]
+    _headers: dict[str, str]
+    _timeout: tuple[float, float]
+    _manual_cleanup: bool
 
     def __init__(
         self,
@@ -509,7 +516,7 @@ class Client:
         )
         if self._write_api_urls:
             self.api_url = next(iter(self._write_api_urls))
-            self.api_key: Optional[str] = self._write_api_urls[self.api_url]
+            self.api_key = self._write_api_urls[self.api_url]
         else:
             self.api_url = ls_utils.get_api_url(api_url)
             self.api_key = ls_utils.get_api_key(api_key)
@@ -521,6 +528,7 @@ class Client:
             if isinstance(timeout_ms, int)
             else (timeout_ms or (10_000, 90_001))
         )
+        self._timeout = (self.timeout_ms[0] / 1000, self.timeout_ms[1] / 1000)
         self._web_url = web_url
         self._tenant_id: Optional[uuid.UUID] = None
         # Create a session and register a finalizer to close it
@@ -676,13 +684,7 @@ class Client:
         """The web host url."""
         return ls_utils.get_host_url(self._web_url, self.api_url)
 
-    @property
-    def _headers(self) -> dict[str, str]:
-        """Get the headers for the API request.
-
-        Returns:
-            Dict[str, str]: The headers for the API request.
-        """
+    def _compute_headers(self) -> dict[str, str]:
         headers = {
             "User-Agent": f"langsmith-py/{langsmith.__version__}",
             "Accept": "application/json",
@@ -690,6 +692,16 @@ class Client:
         if self.api_key:
             headers[X_API_KEY] = self.api_key
         return headers
+
+    @property
+    def api_key(self) -> Optional[str]:
+        """Return the API key used for authentication."""
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, value: Optional[str]) -> None:
+        object.__setattr__(self, "_api_key", value)
+        object.__setattr__(self, "_headers", self._compute_headers())
 
     @property
     def info(self) -> ls_schemas.LangSmithInfo:
@@ -705,7 +717,7 @@ class Client:
                     "GET",
                     "/info",
                     headers={"Accept": "application/json"},
-                    timeout=(self.timeout_ms[0] / 1000, self.timeout_ms[1] / 1000),
+                    timeout=self._timeout,
                 )
                 ls_utils.raise_for_status_with_text(response)
                 self._info = ls_schemas.LangSmithInfo(**response.json())
@@ -785,7 +797,7 @@ class Client:
         """
         request_kwargs = request_kwargs or {}
         request_kwargs = {
-            "timeout": (self.timeout_ms[0] / 1000, self.timeout_ms[1] / 1000),
+            "timeout": self._timeout,
             **request_kwargs,
             **kwargs,
             "headers": {
@@ -2065,6 +2077,7 @@ class Client:
         tags: Optional[list[str]] = None,
         attachments: Optional[ls_schemas.Attachments] = None,
         dangerously_allow_filesystem: bool = False,
+        reference_example_id: str | uuid.UUID | None = None,
         **kwargs: Any,
     ) -> None:
         """Update a run in the LangSmith API.
@@ -2081,6 +2094,9 @@ class Client:
             tags (Optional[List[str]]): The tags for the run.
             attachments (Optional[Dict[str, Attachment]]): A dictionary of attachments to add to the run. The keys are the attachment names,
                 and the values are Attachment objects containing the data and mime type.
+            reference_example_id (Optional[Union[str, uuid.UUID]]): ID of the example
+                that was the source of the run inputs. Used for runs that were part of
+                an experiment.
             **kwargs (Any): Kwargs are ignored.
 
         Returns:
@@ -2166,6 +2182,8 @@ class Client:
             self._insert_runtime_env([data])
             if metadata := data["extra"].get("metadata"):
                 data["extra"]["metadata"] = self._hide_run_metadata(metadata)
+        if reference_example_id is not None:
+            data["reference_example_id"] = reference_example_id
 
         if self._pyo3_client is not None:
             self._pyo3_client.update_run(data)
@@ -4206,8 +4224,16 @@ class Client:
                         mime_type, attachment_data = attachment
                     if isinstance(attachment_data, Path):
                         if dangerously_allow_filesystem:
-                            file_size = os.path.getsize(attachment_data)
-                            file = open(attachment_data, "rb")
+                            try:
+                                file_size = os.path.getsize(attachment_data)
+                                file = open(attachment_data, "rb")
+                            except FileNotFoundError:
+                                logger.warning(
+                                    "Attachment file not found for example %s: %s",
+                                    example_id,
+                                    attachment_data,
+                                )
+                                continue
                             opened_files_dict[
                                 str(attachment_data) + str(uuid.uuid4())
                             ] = file
@@ -7383,6 +7409,7 @@ class Client:
         blocking: bool = True,
         experiment: Optional[EXPERIMENT_T] = None,
         upload_results: bool = True,
+        error_handling: Literal["log", "ignore"] = "log",
         **kwargs: Any,
     ) -> Union[ExperimentResults, ComparativeExperimentResults]:
         r"""Evaluate a target system on a given dataset.
@@ -7419,6 +7446,9 @@ class Client:
                 two-tuple fo experiments.
             upload_results (bool, default=True): Whether to upload the results to LangSmith.
                 Defaults to True.
+            error_handling (str, default="log"): How to handle individual run errors. 'log'
+                will trace the runs with the error message as part of the experiment,
+                'ignore' will not count the run as part of the experiment at all.
             **kwargs (Any): Additional keyword arguments to pass to the evaluator.
 
         Returns:
@@ -7618,6 +7648,7 @@ class Client:
             blocking=blocking,
             experiment=experiment,
             upload_results=upload_results,
+            error_handling=error_handling,
             **kwargs,
         )
 
@@ -7645,6 +7676,7 @@ class Client:
         blocking: bool = True,
         experiment: Optional[Union[schemas.TracerSession, str, uuid.UUID]] = None,
         upload_results: bool = True,
+        error_handling: Literal["log", "ignore"] = "log",
         **kwargs: Any,
     ) -> AsyncExperimentResults:
         r"""Evaluate an async target system on a given dataset.
@@ -7678,6 +7710,9 @@ class Client:
                 usage only.
             upload_results (bool, default=True): Whether to upload the results to LangSmith.
                 Defaults to True.
+            error_handling (str, default="log"): How to handle individual run errors. 'log'
+                will trace the runs with the error message as part of the experiment,
+                'ignore' will not count the run as part of the experiment at all.
             **kwargs (Any): Additional keyword arguments to pass to the evaluator.
 
         Returns:
@@ -7859,6 +7894,7 @@ class Client:
             blocking=blocking,
             experiment=experiment,
             upload_results=upload_results,
+            error_handling=error_handling,
             **kwargs,
         )
 

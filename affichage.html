@@ -1,0 +1,40 @@
+<!-- Chatbot simple pour IASA -->
+<div id="chat-widget" style="position:fixed;bottom:20px;right:20px;width:300px;background:#f8f8f8;border:1px solid #ccc;border-radius:10px;padding:10px;font-family:sans-serif;z-index:9999;">
+  <div style="font-weight:bold;margin-bottom:5px;">🤖 Assistant IASA</div>
+  <div id="chat-log" style="height:150px;overflow-y:auto;border:1px solid #ddd;padding:5px;font-size:14px;margin-bottom:5px;"></div>
+  <input type="text" id="chat-input" placeholder="Pose ta question..." style="width:100%;padding:5px;border-radius:5px;border:1px solid #ccc;">
+  <button onclick="sendChat()" style="width:100%;margin-top:5px;padding:5px;border:none;background:#007bff;color:#fff;border-radius:5px;">Envoyer</button>
+</div>
+
+<script>
+  async function sendChat() {
+    const input = document.getElementById("chat-input");
+    const log = document.getElementById("chat-log");
+    const question = input.value.trim();
+    if (!question) return;
+
+    log.innerHTML += `<div><strong>👤:</strong> ${question}</div>`;
+    input.value = "";
+
+    try {
+      const response = await fetch("http://127.0.0.1:8000/ask_question", { // remplace par ton IP publique ou domaine
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+
+      const data = await response.json();
+      const answer = data.message || "Pas de réponse";
+
+      let content = `<div><strong>🤖:</strong> ${answer}</div>`;
+      if (data.download_link) {
+        content += `<div><a href="${data.download_link}" target="_blank">📥 Télécharger le fichier Excel</a></div>`;
+      }
+
+      log.innerHTML += content;
+      log.scrollTop = log.scrollHeight;
+    } catch (e) {
+      log.innerHTML += `<div style="color:red;"><strong>Erreur :</strong> ${e.message}</div>`;
+    }
+  }
+</script>

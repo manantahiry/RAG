@@ -1,8 +1,27 @@
-langchain
-langchain-community
-langchain-ollama
-sentence-transformers
-faiss-cpu
-pypdf
+# LLM + embeddings
+openai==1.27.0
+langchain==0.1.16
+langchain-community==0.0.36
+langchain-openai==0.1.6
+sentence-transformers==2.2.2
+huggingface-hub==0.15.1
+transformers==4.30.2
+torch==2.7.1
+# Oracle + PDF + fichiers
+cx_Oracle
 python-dotenv
-streamlit
+pdfplumber
+PyMuPDF
+unstructured
+
+# Vector store
+faiss-cpu
+
+# Frontend et API
+streamlit==1.27.2
+fastapi==0.109.2
+
+# Autres utilitaires
+tqdm
+requests
+

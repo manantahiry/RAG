@@ -80,12 +80,12 @@ class HTTPFileSystem(AsyncFileSystem):
             https://docs.aiohttp.org/en/stable/client_reference.html
             For example, ``{'auth': aiohttp.BasicAuth('user', 'pass')}``
         get_client: Callable[..., aiohttp.ClientSession]
-            A callable which takes keyword arguments and constructs
-            an aiohttp.ClientSession. It's state will be managed by
+            A callable, which takes keyword arguments and constructs
+            an aiohttp.ClientSession. Its state will be managed by
             the HTTPFileSystem class.
         storage_options: key-value
             Any other parameters passed on to requests
-        cache_type, cache_options: defaults used in open
+        cache_type, cache_options: defaults used in open()
         """
         super().__init__(self, asynchronous=asynchronous, loop=loop, **storage_options)
         self.block_size = block_size if block_size is not None else DEFAULT_BLOCK_SIZE
@@ -158,14 +158,24 @@ class HTTPFileSystem(AsyncFileSystem):
         session = await self.set_session()
         async with session.get(self.encode_url(url), **self.kwargs) as r:
             self._raise_not_found_for_status(r, url)
-            try:
-                text = await r.text()
-                if self.simple_links:
-                    links = ex2.findall(text) + [u[2] for u in ex.findall(text)]
-                else:
-                    links = [u[2] for u in ex.findall(text)]
-            except UnicodeDecodeError:
-                links = []  # binary, not HTML
+
+            if "Content-Type" in r.headers:
+                mimetype = r.headers["Content-Type"].partition(";")[0]
+            else:
+                mimetype = None
+
+            if mimetype in ("text/html", None):
+                try:
+                    text = await r.text(errors="ignore")
+                    if self.simple_links:
+                        links = ex2.findall(text) + [u[2] for u in ex.findall(text)]
+                    else:
+                        links = [u[2] for u in ex.findall(text)]
+                except UnicodeDecodeError:
+                    links = []  # binary, not HTML
+            else:
+                links = []
+
         out = set()
         parts = urlparse(url)
         for l in links:
@@ -254,7 +264,7 @@ class HTTPFileSystem(AsyncFileSystem):
             if isfilelike(lpath):
                 outfile = lpath
             else:
-                outfile = open(lpath, "wb")  # noqa: ASYNC101, ASYNC230
+                outfile = open(lpath, "wb")  # noqa: ASYNC230
 
             try:
                 chunk = True
@@ -286,7 +296,7 @@ class HTTPFileSystem(AsyncFileSystem):
                 context = nullcontext(lpath)
                 use_seek = False  # might not support seeking
             else:
-                context = open(lpath, "rb")  # noqa: ASYNC101, ASYNC230
+                context = open(lpath, "rb")  # noqa: ASYNC230
                 use_seek = True
 
             with context as f:
@@ -812,7 +822,7 @@ async def get_range(session, url, start, end, file=None, **kwargs):
     async with r:
         out = await r.read()
     if file:
-        with open(file, "r+b") as f:  # noqa: ASYNC101, ASYNC230
+        with open(file, "r+b") as f:  # noqa: ASYNC230
             f.seek(start)
             f.write(out)
     else:

@@ -1,37 +1,68 @@
-# LangChain RAG avec Ollama et Mistral
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
-from langchain_text_splitters import CharacterTextSplitter
+# main.py — Assistant hybride Oracle (SQL) + RAG
+import os
+import cx_Oracle
+import streamlit as st
+from dotenv import load_dotenv
+from langchain_openai import ChatOpenAI
+from langchain.chains import RetrievalQA
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.chains.retrieval_qa.base import RetrievalQA
-from langchain_ollama import OllamaLLM  # Assure-toi que ce module est installé
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.llms import Ollama
+from schema_loader import load_schema_from_file
 
-# --- 1. Charger les documents PDF + TXT
-pdf_loader = PyPDFLoader("docs/exemple.pdf")
-txt_loader = TextLoader("docs/exemple.txt")
-documents = pdf_loader.load() + txt_loader.load()
+# --- Charger les variables d'environnement
+load_dotenv()
 
-# --- 2. Découper les documents en morceaux (chunks)
-text_splitter = CharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-docs = text_splitter.split_documents(documents)
+# --- Config Oracle
+oracle_user = os.getenv("ORACLE_USER")
+oracle_password = os.getenv("ORACLE_PASSWORD")
+oracle_dsn = os.getenv("ORACLE_DSN")
 
-# --- 3. Générer les embeddings avec HuggingFace
-embedding = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+#lire le schéma depuis le fichier
+schema_description = load_schema_from_file("schema_description.txt")
 
-# --- 4. Indexer les chunks avec FAISS
-vectordb = FAISS.from_documents(docs, embedding)
+# --- choix du LLM
+use_ollama = os.getenv("USE_OLLAMA", "false").lower() == "true"
+if use_ollama:
+    llm = Ollama(model="mistral")
+else:
+    llm = ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model="gpt-3.5-turbo")
 
-# --- 5. Utiliser le modèle mistral via Ollama
-llm = OllamaLLM(model="mistral")  # ✅ ici on utilise mistral en faisant "ollama pull mistral"
+# --- Pose de question
+print("🧠 Pose ta question (ex : 'Quels sont les courriers en retard ?') :")
+question = input(" 👉").strip()
 
-# --- 6. Créer la chaîne RAG
-qa_chain = RetrievalQA.from_chain_type(llm=llm, retriever=vectordb.as_retriever())
+#generer une requete SQL Oracle à partire du schéma
+sql_prompt = f"""
+en te basant uniquement sur le schéma suivant :
 
-# --- 7. Poser la question
-print("\n❓ Pose ta question (ex : Qu’est-ce que le machine learning ?) :")
-query = input("> ")
-response = qa_chain.invoke(query)
+{schema_description}
 
-# --- 8. Afficher la réponse
-print("\n📘 Réponse générée par Mistral via Ollama :")
-print(response)
+Génère une requête Oracle SQL SELECT valide pour répondre à cette question :
+{question}
+"""
+response = llm.invoke(sql_prompt)
+generated_sql = response.content.strip()
+if generated_sql.endswith(";"):
+    generated_sql = generated_sql[:-1]
+    
+print(f"\n📝 Requête SQL générée :\n{generated_sql}")
+
+
+# --- Exécuter Oracle
+try:
+    conn = cx_Oracle.connect(oracle_user, oracle_password, oracle_dsn)
+    cursor = conn.cursor()
+    cursor.execute(generated_sql)
+    columns = [col[0] for col in cursor.description]
+    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+    cursor.close()
+    conn.close()
+    
+    print("\n📊 Résultat SQL :")
+    for row in rows:
+        print(row)
+
+except Exception as e:
+    print(f"❌ Erreur lors de l'exécution SQL :{e}")

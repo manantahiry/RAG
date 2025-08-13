@@ -1,5 +1,5 @@
 #!/bin/sh
-'''exec' "/media/manantah/Volume_Data/ENI/kontrana stage/Arato/rag-env/bin/python3" "$0" "$@"
+'''exec' "/media/manantahiry/Marius/ENI/kontrana stage/Arato/rag-env/bin/python3" "$0" "$@"
 ' '''
 # -*- coding: utf-8 -*-
 import re
